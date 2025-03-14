@@ -1,5 +1,3 @@
-code.gitea.io/gitea/modules/structs v0.0.0-20190610152049-835b53fc259c h1:WwxK+8qmKYgU2pfcbCeRSqKwEPeHnW/sfmNc6pjLZC8=
-code.gitea.io/gitea/modules/structs v0.0.0-20190610152049-835b53fc259c/go.mod h1:e/Ukqo229PbsSEymXfLWmNz4g04hwnFml5lW6U+0Azs=
 github.com/Azure/go-ntlmssp v0.0.0-20221128193559-754e69321358 h1:mFRzDkZVAjdal+s7s0MwaRv9igoPqLRdzOLzw/8Xvq8=
 github.com/Azure/go-ntlmssp v0.0.0-20221128193559-754e69321358/go.mod h1:chxPXzSsl7ZWRAuOIE23GDNzjWuZquvFlgA8xmpunjU=
 github.com/alexbrainman/sspi v0.0.0-20231016080023-1a75b4708caa h1:LHTHcTQiSGT7VVbI0o4wBRNQIgn917usHWOd6VAffYI=
