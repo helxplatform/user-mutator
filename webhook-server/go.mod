@@ -42,7 +42,6 @@ require (
 )
 
 require (
-	code.gitea.io/gitea/modules/structs v0.0.0-20190610152049-835b53fc259c
 	github.com/go-ldap/ldap/v3 v3.4.8
 	github.com/go-logr/logr v1.4.2 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect

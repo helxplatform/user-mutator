@@ -1,15 +1,15 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -19,7 +19,6 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 
-	giteaAPI "code.gitea.io/gitea/modules/structs"
 	"github.com/gorilla/mux"
 	admissionv1 "k8s.io/api/admission/v1"
 	appsv1 "k8s.io/api/apps/v1"
@@ -95,6 +94,7 @@ type User struct {
 	SupplementalGroups []string     `json:"supplementalGroups,omitempty"`
 	Groups             []string     `json:"groups,omitempty"`
 	PosixGroups        []PosixGroup `json:"posixGroups,omitempty"` // Added field
+	UserAlias          string       `json:"UserAlias,omitempty"`
 
 	// posixAccount fields
 	UIDNumber     string `json:"uidNumber,omitempty"`
@@ -119,7 +119,7 @@ type LDAPConfig struct {
 	Password                string `json:"-"`
 	UserBaseDN              string `json:"user_base_dn"`
 	GroupBaseDN             string `json:"group_base_dn"`
-	LibNSSLDAPConfigMapName string `json:libnss_ldap_config_map_name`
+	LibNSSLDAPConfigMapName string `json:"libnssLdapConfigMapName"`
 }
 
 // AppConfig struct holds paths and loaded configuration
@@ -138,211 +138,13 @@ type ProfileResources struct {
 	Volumes            []corev1.Volume
 	VolumeMounts       []corev1.VolumeMount
 	EnvFromSources     []corev1.EnvFromSource
+	Env                []corev1.EnvVar
 	PodSecurityContext *corev1.PodSecurityContext
 	SecurityContext    *corev1.SecurityContext
 }
 
 // Global variable to hold application configuration
 var appConfig *AppConfig
-
-var access *GiteaAccess
-var authToken string
-
-func init() {
-	//access, _ = getAccess()
-	//authToken = createUserToken(access.URL, access.Username, access.Password, access.Username)
-}
-
-func startHTTPServer() {
-	http.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("OK"))
-	})
-
-	http.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("OK"))
-	})
-
-	http.ListenAndServe(":8080", nil)
-}
-
-func getAccess() (*GiteaAccess, error) {
-	var access *GiteaAccess
-
-	username, err := os.ReadFile("/etc/user-mutator-secrets/gitea-username")
-	if err != nil {
-		log.Fatalf("Error reading username: %v", err)
-		return access, err
-	}
-
-	password, err := os.ReadFile("/etc/user-mutator-secrets/gitea-password")
-	if err != nil {
-		log.Fatalf("Error reading password: %v", err)
-		return access, err
-	}
-
-	url, err := os.ReadFile("/etc/user-mutator-configs/gitea-api-url")
-	if err != nil {
-		log.Fatalf("Error reading password: %v", err)
-		return access, err
-	}
-
-	access = &GiteaAccess{
-		URL:      string(url),
-		Username: string(username),
-		Password: string(password),
-	}
-
-	return access, nil
-}
-
-func createUserToken(giteaBaseURL, adminUsername, adminPassword, username string) string {
-	option := giteaAPI.CreateAccessTokenOption{
-		Name: "auth_token",
-	}
-
-	jsonData, _ := json.Marshal(option)
-
-	req, _ := http.NewRequest("POST", giteaBaseURL+"/users/"+username+"/tokens", bytes.NewBuffer(jsonData))
-	req.SetBasicAuth(adminUsername, adminPassword)
-	req.Header.Add("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return ""
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusCreated {
-		return ""
-	}
-
-	var result map[string]string
-	json.NewDecoder(resp.Body).Decode(&result)
-	return result["sha1"]
-}
-
-func createUser(giteaBaseURL, adminUsername, adminPassword, username, password string) {
-	/*
-		user := giteaAPI.CreateUserOption{
-			Username: username,
-			Email:    "jeffw@renci.org",
-			Password: password,
-		}
-	*/
-	type CreateUser struct {
-		Username string `json:"username" binding:"Required;Username;MaxSize(40)"`
-		Email    string `json:"email" binding:"Required;Email;MaxSize(254)"`
-		Password string `json:"password" binding:"Required;MaxSize(255)"`
-	}
-	user := CreateUser{
-		Username: username,
-		Email:    "xxx@gmail.com",
-		Password: password,
-	}
-
-	jsonData, _ := json.Marshal(user)
-
-	req, _ := http.NewRequest("POST", giteaBaseURL+"/admin/users", bytes.NewBuffer(jsonData))
-	//req.Header.Add("Authorization", "token "+token)
-	req.Header.Add("Content-Type", "application/json")
-	req.SetBasicAuth(string(adminUsername), string(adminPassword))
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusCreated {
-		body, _ := io.ReadAll(resp.Body)
-		fmt.Println("Failed to create user:", string(body))
-	}
-}
-
-func userExists(giteaBaseURL, adminUsername, adminPassword, username string) (bool, error) {
-	req, _ := http.NewRequest("GET", giteaBaseURL+"/users/"+username, nil)
-	//req.Header.Add("Authorization", "token "+token)
-	req.SetBasicAuth(string(adminUsername), string(adminPassword))
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return false, err
-	}
-	defer resp.Body.Close()
-
-	return resp.StatusCode == http.StatusOK, nil
-}
-
-func handleAdd(obj interface{}) {
-	deployment := obj.(*appsv1.Deployment)
-	if value, exists := deployment.Labels["executor"]; exists && value == "tycho" {
-		if username, exists := deployment.Labels["username"]; exists {
-			fmt.Printf("Deployment with executor=tycho found. Username: %s\n", username)
-			userExists, err := userExists(access.URL, access.Username, access.Password, username)
-			if err != nil {
-				log.Printf("unable to check for user "+username, err)
-				return
-			}
-			if userExists {
-				log.Printf("Gitea user %s found", username)
-			} else {
-				log.Printf("Gitea user %s NOT found", username)
-				createUser(access.URL, access.Username, access.Password, username, "ADx3*x5xww66")
-			}
-		} else {
-			fmt.Println("Deployment with executor=tycho found, but no username label present.")
-		}
-	}
-}
-
-func handleUpdate(oldObj, newObj interface{}) {
-	// This function will be triggered on updates, but currently does nothing.
-	// You can add logic here if needed in the future.
-}
-
-func getCurrentNamespace() (string, error) {
-	// Read the namespace associated with the service account token
-	namespace, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/namespace")
-	if err != nil {
-		return "", err
-	}
-	return string(namespace), nil
-}
-
-/*
-func setupInformer(stopCh chan struct{}, namespace string) cache.SharedInformer {
-	config, err := rest.InClusterConfig()
-	if err != nil {
-		fmt.Printf("Error getting cluster config: %v\n", err)
-		os.Exit(1)
-	}
-
-	clientset, err := kubernetes.NewForConfig(config)
-	if err != nil {
-		fmt.Printf("Error setting up clientset: %v\n", err)
-		os.Exit(1)
-	}
-
-	deploymentListWatcher := cache.NewListWatchFromClient(
-		clientset.AppsV1().RESTClient(),
-		"deployments",
-		namespace,
-		fields.Everything(),
-	)
-
-	informer := cache.NewSharedInformer(
-		deploymentListWatcher,
-		&appsv1.Deployment{},
-		0,
-	)
-
-	informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc:    handleAdd,
-		UpdateFunc: handleUpdate,
-	})
-
-	return informer
-}
-*/
 
 // Function to load the configuration from a JSON file
 func loadConfig(path string) (*Config, error) {
@@ -362,6 +164,21 @@ func loadConfig(path string) (*Config, error) {
 // Custom String method to avoid printing the password
 func (l LDAPConfig) String() string {
 	return fmt.Sprintf("LDAPConfig{Host: %s, Port: %d, Username: %s, UserBaseDN: %s, GroupBaseDN %s, ConfigMapName: %s}", l.Host, l.Port, l.Username, l.UserBaseDN, l.GroupBaseDN, l.LibNSSLDAPConfigMapName)
+}
+
+func MergeEmpty[T any](dst, src *T) {
+	dv := reflect.ValueOf(dst).Elem()
+	sv := reflect.ValueOf(src).Elem()
+
+	for i := 0; i < dv.NumField(); i++ {
+		dstField := dv.Field(i)
+		srcField := sv.Field(i)
+
+		// Only update if the field is a non-empty string
+		if dstField.Kind() == reflect.String && dstField.String() == "" {
+			dstField.Set(srcField)
+		}
+	}
 }
 
 // Function to process features
@@ -449,7 +266,7 @@ func InitializeAppConfig(configPath, mapsDir, secretsDir string) (*AppConfig, er
 	// Set the Kubernetes client handle in the appConfig
 	appConfig.K8sClient = k8sClient
 
-	log.Println("Kubernetes client successfully initialized")
+	slog.Info("Kubernetes client successfully initialized")
 
 	return appConfig, nil
 }
@@ -541,11 +358,27 @@ func searchLDAP(username string) (*User, error) {
 		ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 0, 0, false,
 		fmt.Sprintf("(uid=%s)", ldap.EscapeFilter(username)),
 		[]string{
-			"uid", "cn", "sn", "givenName", "displayName", "mail",
-			"telephoneNumber", "o", "ou", "runAsUser", "runAsGroup",
-			"fsGroup", "supplementalGroups", "memberOf",
+			"uid",
+			"cn",
+			"sn",
+			"givenName",
+			"displayName",
+			"mail",
+			"telephoneNumber",
+			"o",
+			"ou",
+			"runAsUser",
+			"runAsGroup",
+			"fsGroup",
+			"supplementalGroups",
+			"memberOf",
+			"userAlias",
+
 			// posixAccount attributes
-			"uidNumber", "gidNumber", "homeDirectory", "loginShell",
+			"uidNumber",
+			"gidNumber",
+			"homeDirectory",
+			"loginShell",
 		},
 		nil,
 	)
@@ -556,7 +389,7 @@ func searchLDAP(username string) (*User, error) {
 	}
 
 	if len(sr.Entries) == 0 {
-		log.Printf("LDAP User not found: %s", username)
+		slog.Info(fmt.Sprintf("LDAP User not found: %s", username))
 		return nil, nil
 	}
 
@@ -576,6 +409,7 @@ func searchLDAP(username string) (*User, error) {
 		FsGroup:            entry.GetAttributeValue("fsGroup"),
 		SupplementalGroups: entry.GetAttributeValues("supplementalGroups"),
 		Groups:             extractGroupNames(entry.GetAttributeValues("memberOf")),
+		UserAlias:          entry.GetAttributeValue("userAlias"),
 
 		// posixAccount attributes
 		UIDNumber:     entry.GetAttributeValue("uidNumber"),
@@ -609,7 +443,25 @@ func searchLDAP(username string) (*User, error) {
 
 	user.PosixGroups = posixGroups
 
-	log.Printf("user: %v", user)
+	if user.UserAlias != "" {
+		slog.Info("found alias for user", "alias", user.UserAlias)
+		if userAlias, _ := searchLDAP(user.UserAlias); userAlias != nil {
+			slog.Info("merging users", "user", user.UID, "alias", user.UserAlias)
+			MergeEmpty(user, userAlias)
+			if uidNumber, err := strconv.Atoi(user.UIDNumber); err == nil {
+				if uidNumber == -1 {
+					user.UIDNumber = userAlias.UIDNumber
+				}
+			}
+			if gidNumber, err := strconv.Atoi(user.GIDNumber); err == nil {
+				if gidNumber == -1 {
+					user.GIDNumber = userAlias.GIDNumber
+				}
+			}
+		}
+	}
+
+	slog.Info("retrieved LDAP user: ", "user", user)
 
 	return user, nil
 }
@@ -834,7 +686,7 @@ func constructSupplementalGroups(user *User) []int64 {
 	for _, sg := range user.SupplementalGroups {
 		sgInt, err := strconv.ParseInt(sg, 10, 64)
 		if err != nil {
-			log.Printf("Invalid SupplementalGroup '%s': %v", sg, err)
+			slog.Error("Invalid SupplementalGroup", "group", sg, "err", err)
 			continue
 		}
 		supplementalGroups = append(supplementalGroups, sgInt)
@@ -845,7 +697,7 @@ func constructSupplementalGroups(user *User) []int64 {
 	for _, pg := range user.PosixGroups {
 		gidInt, err := strconv.ParseInt(pg.GIDNumber, 10, 64)
 		if err != nil {
-			log.Printf("Invalid GIDNumber '%s' in PosixGroup '%s': %v", pg.GIDNumber, pg.CN, err)
+			slog.Error("Invalid GIDNumber found in PosixGroup", "gid", pg.GIDNumber, "group", pg.CN, "err", err)
 			continue
 		}
 		posixGroupGIDs = append(posixGroupGIDs, gidInt)
@@ -920,6 +772,18 @@ func constructSecurityContexts(user *User) (*corev1.PodSecurityContext, *corev1.
 	return &podSecurityContext, &securityContext, nil
 }
 
+func constructEnv(user *User) []corev1.EnvVar {
+	env := make([]corev1.EnvVar, 0)
+
+	if user.HomeDirectory != "" {
+		env = append(env, corev1.EnvVar{
+			Name:  "HOME",
+			Value: user.HomeDirectory,
+		})
+	}
+	return env
+}
+
 func getPVCsByLabel(clientset *kubernetes.Clientset, groupName, namespace string) ([]corev1.PersistentVolumeClaim, error) {
 	// Define the label selector to filter by the "helx.renci.org/group-name" label
 	labelSelector := fmt.Sprintf("helx.renci.org/group-name=%s", groupName)
@@ -933,9 +797,9 @@ func getPVCsByLabel(clientset *kubernetes.Clientset, groupName, namespace string
 	}
 
 	if len(pvcList.Items) == 0 {
-		log.Printf("no PVCs found with label helx.renci.org/group-name=%s", groupName)
+		slog.Info("no PVCs found with label helx.renci.org/group-name", "group", groupName)
 	} else if len(pvcList.Items) > 1 {
-		log.Printf("multiple PVCs found with label helx.renci.org/group-name=%s", groupName)
+		slog.Error("multiple PVCs found with label helx.renci.org/group-name", "group", groupName)
 	}
 
 	return pvcList.Items, nil
@@ -1030,9 +894,9 @@ func getLDAPConfigVolumesAndMounts(configMapName string) ([]corev1.Volume, []cor
 //
 //	printVolumes(volumes)
 func printVolumes(volumes []corev1.Volume) {
-	log.Println("Volumes:")
+	slog.Debug("Volumes:")
 	for _, volume := range volumes {
-		log.Printf("Name: %s, VolumeSource: %#v\n", volume.Name, volume.VolumeSource)
+		slog.Debug("name", volume.Name, slog.Any("source", volume.VolumeSource))
 	}
 }
 
@@ -1050,12 +914,13 @@ func printVolumes(volumes []corev1.Volume) {
 //
 //	printVolumeMounts(volumeMounts)
 func printVolumeMounts(volumeMounts []corev1.VolumeMount) {
-	log.Println("VolumeMounts:")
+	slog.Debug("VolumeMounts:")
 	for _, mount := range volumeMounts {
-		log.Printf("Name: %s, MountPath: %s, ReadOnly: %v\n", mount.Name, mount.MountPath, mount.ReadOnly)
+		slog.Debug("Mount Info", "name", mount.Name, "path", mount.MountPath, "read only", mount.ReadOnly)
 	}
 }
 
+/*
 // prettyPrintJSON formats a JSON string with indentation for readability.
 //
 // This function takes a JSON string and uses json.Indent to add indentation
@@ -1081,6 +946,7 @@ func prettyPrintJSON(inputJSON string) (string, error) {
 	}
 	return buffer.String(), nil
 }
+*/
 
 // printPatchOperations prints each JsonPatchOperation in the provided slice.
 //
@@ -1100,13 +966,14 @@ func prettyPrintJSON(inputJSON string) (string, error) {
 //
 //	printPatchOperations(patchOperations)
 func printPatchOperations(operations []jsonpatch.JsonPatchOperation) {
+	slog.Debug("Patches:")
 	for i, op := range operations {
 		opJSON, err := json.MarshalIndent(op, "", "    ")
 		if err != nil {
-			log.Printf("Failed to marshal operation %d: %s", i, err)
+			slog.Error("Failed to marshal operation", "num", i, "err", err)
 			continue
 		}
-		fmt.Printf("Operation %d:\n%s\n", i, string(opJSON))
+		slog.Debug("op", "num", i, "patch", opJSON)
 	}
 }
 
@@ -1125,6 +992,7 @@ func applyResourcesToContainers(containers []corev1.Container, resources Profile
 
 		// Add envFrom sources
 		container.EnvFrom = append(container.EnvFrom, resources.EnvFromSources...)
+		container.Env = append(container.Env, resources.Env...)
 	}
 }
 
@@ -1152,7 +1020,7 @@ func calculatePatch(admissionReview *admissionv1.AdmissionReview, resources Prof
 		modifiedDeployment.Spec.Template.Spec.SecurityContext = resources.PodSecurityContext
 	}
 
-	log.Printf("marshalling original new JSON")
+	slog.Info("marshalling original new JSON")
 	modifiedJSON, err := json.Marshal(modifiedDeployment)
 	if err != nil {
 		return nil, err
@@ -1164,7 +1032,6 @@ func calculatePatch(admissionReview *admissionv1.AdmissionReview, resources Prof
 		return nil, err
 	}
 
-	log.Printf("Patches:")
 	printPatchOperations(patchOps)
 
 	// Marshal patch to JSON
@@ -1205,6 +1072,11 @@ func setSecurityContexts(user *User, resources ProfileResources) (ProfileResourc
 	return resources, nil
 }
 
+func setEnvVars(user *User, resources ProfileResources) ProfileResources {
+	resources.Env = constructEnv(user)
+	return resources
+}
+
 func addGroupsToProfile(clientset *kubernetes.Clientset, user *User, namespace string, resources ProfileResources) (ProfileResources, error) {
 	volumes, volumeMounts, err := getVolumesAndMountsForUserGroups(clientset, user, namespace)
 	if err != nil {
@@ -1225,52 +1097,52 @@ func addLibNSSLDAPConfigToProfile(configMapName string, resources ProfileResourc
 func processAdmissionReview(admissionReview admissionv1.AdmissionReview) *admissionv1.AdmissionResponse {
 	// Implement your logic here
 	// For example, always allow the request:
-	log.Printf("processing admission for %s:%s", admissionReview.Request.Namespace, admissionReview.Request.Name)
+	slog.Info("processing admission", "namespace", admissionReview.Request.Namespace, "deployment", admissionReview.Request.Name)
 
 	// Deserialize the AdmissionReview to a Deployment object
 	var deployment appsv1.Deployment
 	if err := json.Unmarshal(admissionReview.Request.Object.Raw, &deployment); err != nil {
-		log.Printf("Error unmarshalling deployment: %v", err)
+		slog.Error("failed to unmarshall deployment", "err", err)
 		return &admissionv1.AdmissionResponse{Allowed: true}
 	}
 
 	if username, err := ExtractUsernameFromAdmissionReview(admissionReview); err == nil {
-		log.Printf("deployment is for user = %s", username)
+		slog.Info("altering user deployment", "user", username)
 
 		var err error
 		resources := ProfileResources{Volumes: []corev1.Volume{}, VolumeMounts: []corev1.VolumeMount{}, EnvFromSources: []corev1.EnvFromSource{}}
 
 		if resources, err = appendProfiles("auto", resources); err != nil {
-			log.Printf("failed to add auto features %v", err)
+			slog.Error("failed to add auto features", "user", username, "err", err)
 		}
 
 		if resources, err = appendProfiles(username+".json", resources); err != nil {
-			log.Printf("failed to add user features %v", err)
+			slog.Error("failed to add user features", "user", username, "err", err)
 		}
 
 		// Search LDAP for user information
 		user, err := searchLDAP(username)
 		if err != nil {
-			log.Printf("Failed to retrieve user from LDAP: %v", err)
-		} else {
+			slog.Error("failed to retrieve user from LDAP", "user", username, "err", err)
+		} else if user != nil {
 			if resources, err = setSecurityContexts(user, resources); err != nil {
-				log.Printf("Failed to construct security contexts: %v", err)
+				slog.Error("failed to construct security contexts", "user", username, "err", err)
 			}
 			if resources, err = addGroupsToProfile(appConfig.K8sClient, user, admissionReview.Request.Namespace, resources); err != nil {
-				log.Printf("Failed to add group volumes: %v", err)
+				slog.Error("failed to add group volumes", "err", err)
 			}
 			if appConfig.LDAPConfig.LibNSSLDAPConfigMapName != "" {
 				resources = addLibNSSLDAPConfigToProfile(appConfig.LDAPConfig.LibNSSLDAPConfigMapName, resources)
 			}
+			resources = setEnvVars(user, resources)
 		}
 
-		//printVolumes(volumes)
-		//log.Println()
-		//printVolumeMounts(volumeMounts)
+		printVolumes(resources.Volumes)
+		printVolumeMounts(resources.VolumeMounts)
 
 		// Calculate the patch
 		if patchBytes, err := calculatePatch(&admissionReview, resources); err != nil {
-			log.Printf("Patch creation failed %v", err)
+			slog.Error("patch creation failed", "err", err)
 		} else {
 			return &admissionv1.AdmissionResponse{
 				UID:     admissionReview.Request.UID,
@@ -1283,7 +1155,7 @@ func processAdmissionReview(admissionReview admissionv1.AdmissionReview) *admiss
 			}
 		}
 	} else {
-		log.Printf("Username not detected %v", err)
+		slog.Error("username not detected", "err", err)
 	}
 	return &admissionv1.AdmissionResponse{
 		UID:     admissionReview.Request.UID,
@@ -1366,6 +1238,12 @@ func livenessHandler(w http.ResponseWriter, r *http.Request) {
 func main() {
 	var err error
 
+	// Create a logger with a TextHandler at the Info level:
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+		Level: slog.LevelInfo,
+	}))
+	slog.SetDefault(logger)
+
 	// Paths
 	configPath := "/etc/user-mutator-config/config.json"
 	mapsDir := "/etc/user-mutator-maps"
@@ -1373,7 +1251,8 @@ func main() {
 
 	// Initialize the global appConfig
 	if appConfig, err = InitializeAppConfig(configPath, mapsDir, secretsDir); err != nil {
-		log.Fatalf("Initialization error: %v", err)
+		slog.Error("Initialization error", "err", err)
+		os.Exit(1)
 	}
 
 	r := mux.NewRouter()
@@ -1381,9 +1260,10 @@ func main() {
 	r.HandleFunc("/readyz", readinessHandler)
 	r.HandleFunc("/healthz", livenessHandler)
 	http.Handle("/", r)
-	log.Println("Server started on :8443")
+	slog.Info("Server started on :8443")
 
 	if err := http.ListenAndServeTLS(":8443", appConfig.TLSCertPath, appConfig.TLSKeyPath, nil); err != nil {
-		log.Printf("Failed to start server: %v", err)
+		slog.Error("Failed to start server", "err", err)
+		os.Exit(1)
 	}
 }
