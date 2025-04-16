@@ -775,6 +775,11 @@ func constructSecurityContexts(user *User) (*corev1.PodSecurityContext, *corev1.
 func constructEnv(user *User) []corev1.EnvVar {
 	env := make([]corev1.EnvVar, 0)
 
+	env = append(env, corev1.EnvVar{
+		Name:  "USER_IDENTITY",
+		Value: "ldap",
+	})
+
 	if user.HomeDirectory != "" {
 		env = append(env, corev1.EnvVar{
 			Name:  "HOME",
@@ -853,7 +858,7 @@ func getVolumesAndMountsForUserGroups(clientset *kubernetes.Clientset, user *Use
 func getLDAPConfigVolumesAndMounts(configMapName string) ([]corev1.Volume, []corev1.VolumeMount) {
 	volumes := []corev1.Volume{
 		{
-			Name: "libnss-ldap-config",
+			Name: "ldap-config",
 			VolumeSource: corev1.VolumeSource{
 				ConfigMap: &corev1.ConfigMapVolumeSource{
 					LocalObjectReference: corev1.LocalObjectReference{
@@ -866,12 +871,17 @@ func getLDAPConfigVolumesAndMounts(configMapName string) ([]corev1.Volume, []cor
 
 	volumeMounts := []corev1.VolumeMount{
 		{
-			Name:      "libnss-ldap-config",
+			Name:      "ldap-config",
 			MountPath: "/etc/libnss-ldap.conf",
 			SubPath:   "libnss-ldap.conf",
 		},
 		{
-			Name:      "libnss-ldap-config",
+			Name:      "ldap-config",
+			MountPath: "/etc/ldap.conf",
+			SubPath:   "libnss-ldap.conf",
+		},
+		{
+			Name:      "ldap-config",
 			MountPath: "/etc/nsswitch.conf",
 			SubPath:   "nsswitch.conf",
 		},
