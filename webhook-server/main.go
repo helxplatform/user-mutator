@@ -1054,7 +1054,7 @@ func calculatePatch(admissionReview *admissionv1.AdmissionReview, resources Prof
 }
 
 func appendProfiles(featureKey string, resources ProfileResources) (ProfileResources, error) {
-	profilePath := filepath.Join(appConfig.MapsDir, "user_profiles")
+	profilePath := filepath.Join(appConfig.MapsDir, "user-profiles")
 
 	userProfiles, err := ReadUserProfilesFromFile(featureKey, profilePath)
 	if err != nil {
