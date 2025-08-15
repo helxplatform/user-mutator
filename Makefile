@@ -12,7 +12,7 @@ BASE_IMAGE := user-mutator
 REGISTRY := containers.renci.org/helxplatform
 IMAGE_TAG := $(REGISTRY)/$(BASE_IMAGE)
 CHART_NAME := $(BASE_IMAGE)
-VERSION := $(or $(VERSION),"v1.4.1")
+VERSION := $(or $(VERSION),"v1.5.0")
 
 ## Kind Related
 KIND_CLUSTER := mutator
