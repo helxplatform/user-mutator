@@ -19,7 +19,7 @@ KIND_CLUSTER := mutator
 
 MAKEFILE_PATH := $(abspath $(lastword $(MAKEFILE_LIST)))
 MAKEFILE_DIR := $(dir $(MAKEFILE_PATH))
-CERT_DIR := $(MAKEFILE_DIR)certs
+CERT_DIR := $(MAKEFILE_DIR)certs-$(MUTATE_CONFIG)
 
 # export all variables
 export
@@ -82,13 +82,13 @@ clean:
 	kubectl delete MutatingWebhookConfiguration $(MUTATE_CONFIG) || true && \
 	helm -n $(WEBHOOK_NAMESPACE) delete $(CHART_NAME) || true && \
 	kubectl -n $(WEBHOOK_NAMESPACE) delete secret $(SECRET) || true && \
-	rm -rf ./certs || true && \
+	rm -rf ./envs/certs || true && \
 	rm -f webhook-server/$(BINARY_NAME)
 
 deploy-webhook-server: key-cert-secret
 	helm -n $(WEBHOOK_NAMESPACE) upgrade --install $(CHART_NAME) \
 	    --set "image.pullPolicy=IfNotPresent" --set "image.tag=$(VERSION)" \
-		--set "config.secrets.cert=$(SECRET)" \
+		--set "config.secrets.cert=$(SECRET)" $(HELM_INSTALL_ARG_1) $(HELM_INSTALL_ARG_2) \
 		./chart
 	@echo ""
 	@echo "To view and follow the logs of the mutator use the following command."
