@@ -52,9 +52,10 @@ spec:
           volumeMounts:
             - name: config
               mountPath: /etc/user-mutator-config
-            {{- range .Values.config.maps }}
-            - name: maps
-              mountPath: /etc/user-mutator-maps/
+            {{- range $mapName, $_ := .Values.config.maps }}
+            - name: {{ printf "map-%s" $mapName | replace "_" "-" | lower }}
+              mountPath: {{ printf "/etc/user-mutator-maps/%s" $mapName }}
+              readOnly: true
             {{- end }}
             {{- range $key, $value := .Values.config.secrets }}
             - name: {{ $key }}-secret
@@ -65,17 +66,12 @@ spec:
         - name: config
           configMap:
             name: {{ include "user-mutator.fullname" . }}-config
-        - name: maps
-          projected:
-            sources:
-            {{- range $key, $value := .Values.config.maps }}
-              - configMap:
-                  name: {{ $value }}
-                  optional: true
-                  items:
-                    - key: {{ $key }}
-                      path: {{ $key }}
-            {{- end }}
+        {{- range $key, $mapName := .Values.config.maps }}
+        - name: {{ printf "map-%s" $key | replace "_" "-" | lower }}
+          configMap:
+            name: {{ $mapName }}
+            optional: true
+        {{- end }}
         {{- range $key, $value := .Values.config.secrets }}
         - name: {{ $key }}-secret
           secret:

@@ -21,6 +21,7 @@ import (
 	"github.com/mattbaird/jsonpatch"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
+	"sigs.k8s.io/yaml"
 
 	"github.com/gorilla/mux"
 	admissionv1 "k8s.io/api/admission/v1"
@@ -308,29 +309,27 @@ func InitializeAppConfig(configPath, mapsDir, secretsDir string) (*AppConfig, er
 //
 // Usage:
 //
-//	features, err := ReadUserProfilesFromFile(basename, directory)
+//	profile, err := ReadUserProfilesFromFile(basename, directory)
 func ReadUserProfilesFromFile(basename, directory string) (*UserProfiles, error) {
-	filePath := filepath.Join(directory, basename)
+	filePath := filepath.Join(directory, basename+".yaml")
 
-	// Check if the file exists
+	slog.Debug("Reading Profile", "filePath", filePath)
+
 	if _, err := os.Stat(filePath); os.IsNotExist(err) {
 		return nil, nil
 	}
 
-	// Read the file
-	fileData, err := os.ReadFile(filePath)
+	b, err := os.ReadFile(filePath)
 	if err != nil {
-		return nil, fmt.Errorf("error reading file: %s", err)
+		return nil, fmt.Errorf("error reading %q: %w", filePath, err)
 	}
 
-	// Deserialize the JSON content into a UserProfiles instance
-	var features UserProfiles
-	err = json.Unmarshal(fileData, &features)
-	if err != nil {
-		return nil, fmt.Errorf("error unmarshalling JSON: %s", err)
+	var profile UserProfiles
+	if err := yaml.Unmarshal(b, &profile); err != nil {
+		return nil, fmt.Errorf("error unmarshalling YAML for %q: %w", filePath, err)
 	}
-
-	return &features, nil
+	slog.Debug("Unmarshalled ", "profile", profile)
+	return &profile, nil
 }
 
 func extractCN(dn string) string {
@@ -629,7 +628,19 @@ func FindMatchingResources(namespace, kind, rawTpl string, ctx map[string]string
 	return matches, nil
 }
 
-func parseVolumeSources(namespace, baseName, rawSrc string) ([]VolumeContext, error) {
+func expandTemplate(raw string, ctx map[string]string) (string, error) {
+	t, err := template.New("raw").Option("missingkey=error").Parse(raw)
+	if err != nil {
+		return "", fmt.Errorf("template parse error: %w", err)
+	}
+	var buf bytes.Buffer
+	if err := t.Execute(&buf, ctx); err != nil {
+		return "", fmt.Errorf("template exec error: %w", err)
+	}
+	return buf.String(), nil
+}
+
+func parseVolumeSources(namespace, baseName, rawSrc string, ctx map[string]string) ([]VolumeContext, error) {
 	parts := strings.SplitN(rawSrc, "://", 2)
 	scheme, pathTpl := "pvc", parts[0]
 	if len(parts) == 2 {
@@ -641,7 +652,123 @@ func parseVolumeSources(namespace, baseName, rawSrc string) ([]VolumeContext, er
 
 	switch scheme {
 	case "pvc", "secret":
-		matches, err := FindMatchingResources(namespace, scheme, pathTpl, nil)
+		matches, err := FindMatchingResources(namespace, scheme, pathTpl, ctx)
+		if err != nil {
+			return nil, fmt.Errorf("scanning %s: %w", scheme, err)
+		}
+
+		// Ensure deterministic Index values
+		sort.Slice(matches, func(i, j int) bool { return matches[i].Name < matches[j].Name })
+
+		for i, m := range matches {
+			uniqueName := fmt.Sprintf("%s-%d", baseName, i)
+
+			// Build Vars: merge caller ctx → capture groups → conveniences
+			vars := make(map[string]interface{}, len(ctx)+8+len(m.Groups))
+			for k, v := range ctx { // e.g. username
+				vars[k] = v
+			}
+			vars["ctx"] = ctx // nested copy if you prefer {{.ctx.username}}
+			vars["cap"] = append([]string(nil), m.Groups...)
+			vars["ResourceName"] = m.Name
+			vars["ResourceKind"] = scheme
+			vars["BaseName"] = baseName
+			vars["Namespace"] = namespace
+			vars["Index"] = i
+			vars["VolumeName"] = uniqueName
+
+			var vs corev1.VolumeSource
+			if scheme == "pvc" {
+				vs = corev1.VolumeSource{
+					PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+						ClaimName: m.Name,
+					},
+				}
+			} else {
+				vs = corev1.VolumeSource{
+					Secret: &corev1.SecretVolumeSource{
+						SecretName: m.Name,
+					},
+				}
+			}
+
+			out = append(out, VolumeContext{
+				BaseName: baseName,
+				Index:    i,
+				Volume: corev1.Volume{
+					Name:         uniqueName,
+					VolumeSource: vs,
+				},
+				Vars: vars,
+			})
+		}
+
+	case "nfs":
+		// Allow {{...}} in NFS path (e.g., nfs://{{.username}}-srv:/home/{{.username}})
+		expanded, err := expandTemplate(pathTpl, ctx)
+		if err != nil {
+			return nil, fmt.Errorf("nfs path template: %w", err)
+		}
+		np := strings.SplitN(expanded, ":", 2)
+		if len(np) != 2 {
+			return nil, fmt.Errorf("invalid nfs spec %q (want host:/path)", expanded)
+		}
+		server, exportPath := np[0], np[1]
+
+		uniqueName := fmt.Sprintf("%s-%d", baseName, 0)
+		vs := corev1.VolumeSource{
+			NFS: &corev1.NFSVolumeSource{
+				Server: server,
+				Path:   "/" + strings.TrimPrefix(exportPath, "/"),
+			},
+		}
+
+		vars := make(map[string]interface{}, len(ctx)+8)
+		for k, v := range ctx { // carry caller context into templates
+			vars[k] = v
+		}
+		vars["ctx"] = ctx
+		vars["cap"] = []string{} // keep key present
+		vars["Host"] = server
+		vars["Path"] = exportPath
+		vars["BaseName"] = baseName
+		vars["Namespace"] = namespace
+		vars["Index"] = 0
+		vars["VolumeName"] = uniqueName
+		vars["ResourceKind"] = "nfs"
+		vars["ResourceName"] = server
+
+		out = append(out, VolumeContext{
+			BaseName: baseName,
+			Index:    0,
+			Volume: corev1.Volume{
+				Name:         uniqueName,
+				VolumeSource: vs,
+			},
+			Vars: vars,
+		})
+
+	default:
+		return nil, fmt.Errorf("unsupported scheme %q", scheme)
+	}
+
+	return out, nil
+}
+
+/*
+func parseVolumeSources(namespace, baseName, rawSrc string, ctx map[string]string) ([]VolumeContext, error) {
+	parts := strings.SplitN(rawSrc, "://", 2)
+	scheme, pathTpl := "pvc", parts[0]
+	if len(parts) == 2 {
+		scheme = parts[0]
+		pathTpl = parts[1]
+	}
+
+	var out []VolumeContext
+
+	switch scheme {
+	case "pvc", "secret":
+		matches, err := FindMatchingResources(namespace, scheme, pathTpl, ctx)
 		if err != nil {
 			return nil, fmt.Errorf("scanning %s: %w", scheme, err)
 		}
@@ -719,13 +846,14 @@ func parseVolumeSources(namespace, baseName, rawSrc string) ([]VolumeContext, er
 
 	return out, nil
 }
+*/
 
-func GetVolumeContextsMap(namespace string, cfg VolumeConfig) (VolumeContextMap, []VolumeContext, error) {
+func GetVolumeContextsMap(namespace string, cfg VolumeConfig, ctx map[string]string) (VolumeContextMap, []VolumeContext, error) {
 	byName := make(VolumeContextMap)
 	var flat []VolumeContext
 
 	for _, vs := range cfg.VolumeSources {
-		vctxs, err := parseVolumeSources(namespace, vs.Name, vs.Source)
+		vctxs, err := parseVolumeSources(namespace, vs.Name, vs.Source, ctx)
 		if err != nil {
 			return nil, nil, fmt.Errorf("volume %q: %w", vs.Name, err)
 		}
@@ -741,6 +869,7 @@ func GetVolumeContextsMap(namespace string, cfg VolumeConfig) (VolumeContextMap,
 
 // GetK8sVolumes expands all entries in cfg.VolumeSources into a flat
 // slice of VolumeContext by scanning PVCs, Secrets, or handling NFS.
+/*
 func GetVolumesContexts(namespace string, cfg VolumeConfig) ([]VolumeContext, error) {
 	var all []VolumeContext
 
@@ -754,6 +883,7 @@ func GetVolumesContexts(namespace string, cfg VolumeConfig) ([]VolumeContext, er
 	}
 	return all, nil
 }
+*/
 
 // GetK8sVolumes takes an array of VolumeContext (already populated by
 // parseVolumeSources elsewhere) and returns a flat slice of corev1.Volume.
@@ -1284,7 +1414,7 @@ func calculatePatch(admissionReview *admissionv1.AdmissionReview, resources Prof
 //   - If reading the profile or expanding volume sources fails → hard error, nothing appended.
 //   - If mount association is ambiguous for some logical Name(s) → mounts for those names are
 //     skipped; other names succeed; we return resources plus a non-nil error describing issues.
-func appendProfiles(featureKey string, namespace string, resources ProfileResources) (ProfileResources, error) {
+func appendProfiles(featureKey string, namespace string, resources ProfileResources, ctx map[string]string) (ProfileResources, error) {
 	profilePath := filepath.Join(appConfig.MapsDir, "user-profiles")
 
 	userProfiles, err := ReadUserProfilesFromFile(featureKey, profilePath)
@@ -1296,7 +1426,7 @@ func appendProfiles(featureKey string, namespace string, resources ProfileResour
 	}
 
 	// 1) Expand volume sources → contexts map + flat slice
-	vmap, vflat, err := GetVolumeContextsMap(namespace, userProfiles.Volumes)
+	vmap, vflat, err := GetVolumeContextsMap(namespace, userProfiles.Volumes, ctx)
 	if err != nil {
 		// Treat invalid volume sources as fatal for this feature
 		return resources, fmt.Errorf("volume spec for %s invalid: %w", featureKey, err)
@@ -1369,12 +1499,17 @@ func processAdmissionReview(admissionReview admissionv1.AdmissionReview) *admiss
 		var err error
 		resources := ProfileResources{Volumes: []corev1.Volume{}, VolumeMounts: []corev1.VolumeMount{}, EnvFromSources: []corev1.EnvFromSource{}}
 
-		if resources, err = appendProfiles("auto", admissionReview.Request.Namespace, resources); err != nil {
-			slog.Error("failed to add auto features", "user", username, "err", err)
+		// make the template context; add more keys as needed later
+		ctx := map[string]string{
+			"username": username,
 		}
 
-		if resources, err = appendProfiles(username+".json", admissionReview.Request.Namespace, resources); err != nil {
-			slog.Error("failed to add user features", "user", username, "err", err)
+		if resources, err = appendProfiles("auto", admissionReview.Request.Namespace, resources, ctx); err != nil {
+			slog.Error("failed to add auto profile", "user", username, "err", err)
+		}
+
+		if resources, err = appendProfiles(username, admissionReview.Request.Namespace, resources, ctx); err != nil {
+			slog.Error("failed to add user profile", "user", username, "err", err)
 		}
 
 		// Search LDAP for user information
@@ -1497,7 +1632,7 @@ func main() {
 
 	// Create a logger with a TextHandler at the Info level:
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
+		Level: slog.LevelDebug,
 	}))
 	slog.SetDefault(logger)
 
