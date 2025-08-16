@@ -755,99 +755,6 @@ func parseVolumeSources(namespace, baseName, rawSrc string, ctx map[string]strin
 	return out, nil
 }
 
-/*
-func parseVolumeSources(namespace, baseName, rawSrc string, ctx map[string]string) ([]VolumeContext, error) {
-	parts := strings.SplitN(rawSrc, "://", 2)
-	scheme, pathTpl := "pvc", parts[0]
-	if len(parts) == 2 {
-		scheme = parts[0]
-		pathTpl = parts[1]
-	}
-
-	var out []VolumeContext
-
-	switch scheme {
-	case "pvc", "secret":
-		matches, err := FindMatchingResources(namespace, scheme, pathTpl, ctx)
-		if err != nil {
-			return nil, fmt.Errorf("scanning %s: %w", scheme, err)
-		}
-		for i, m := range matches {
-			// Build template vars; ".cap" must be available as []string.
-			vars := map[string]interface{}{
-				"cap":          append([]string(nil), m.Groups...), // copy
-				"ResourceName": m.Name,
-				"ResourceKind": scheme, // "pvc" or "secret"
-				"BaseName":     baseName,
-				"Index":        i,
-			}
-
-			// Unique K8s volume name: Name{{X}} => baseName + i
-			uniqueName := baseName + strconv.Itoa(i)
-
-			var vs corev1.VolumeSource
-			if scheme == "pvc" {
-				vs = corev1.VolumeSource{
-					PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-						ClaimName: m.Name,
-					},
-				}
-			} else {
-				vs = corev1.VolumeSource{
-					Secret: &corev1.SecretVolumeSource{
-						SecretName: m.Name,
-					},
-				}
-			}
-
-			out = append(out, VolumeContext{
-				BaseName: baseName,
-				Index:    i,
-				Volume: corev1.Volume{
-					Name:         uniqueName,
-					VolumeSource: vs,
-				},
-				Vars: vars,
-			})
-		}
-
-	case "nfs":
-		np := strings.SplitN(pathTpl, ":", 2)
-		if len(np) != 2 {
-			return nil, fmt.Errorf("invalid nfs spec %q (want host:/path)", pathTpl)
-		}
-		server, exportPath := np[0], np[1]
-
-		uniqueName := baseName + "0"
-		vs := corev1.VolumeSource{
-			NFS: &corev1.NFSVolumeSource{
-				Server: server,
-				Path:   "/" + strings.TrimPrefix(exportPath, "/"),
-			},
-		}
-		out = append(out, VolumeContext{
-			BaseName: baseName,
-			Index:    0,
-			Volume: corev1.Volume{
-				Name:         uniqueName,
-				VolumeSource: vs,
-			},
-			Vars: map[string]interface{}{
-				"cap":   []string{}, // NFS has no regex caps; keep key present
-				"Host":  server,
-				"Path":  exportPath,
-				"Index": 0,
-			},
-		})
-
-	default:
-		return nil, fmt.Errorf("unsupported scheme %q", scheme)
-	}
-
-	return out, nil
-}
-*/
-
 func GetVolumeContextsMap(namespace string, cfg VolumeConfig, ctx map[string]string) (VolumeContextMap, []VolumeContext, error) {
 	byName := make(VolumeContextMap)
 	var flat []VolumeContext
@@ -866,24 +773,6 @@ func GetVolumeContextsMap(namespace string, cfg VolumeConfig, ctx map[string]str
 	}
 	return byName, flat, nil
 }
-
-// GetK8sVolumes expands all entries in cfg.VolumeSources into a flat
-// slice of VolumeContext by scanning PVCs, Secrets, or handling NFS.
-/*
-func GetVolumesContexts(namespace string, cfg VolumeConfig) ([]VolumeContext, error) {
-	var all []VolumeContext
-
-	// For each declared source (with its logical Name and raw Source string)
-	for _, vs := range cfg.VolumeSources {
-		vctxs, err := parseVolumeSources(namespace, vs.Name, vs.Source)
-		if err != nil {
-			return nil, fmt.Errorf("volume %q: %w", vs.Name, err)
-		}
-		all = append(all, vctxs...)
-	}
-	return all, nil
-}
-*/
 
 // GetK8sVolumes takes an array of VolumeContext (already populated by
 // parseVolumeSources elsewhere) and returns a flat slice of corev1.Volume.
