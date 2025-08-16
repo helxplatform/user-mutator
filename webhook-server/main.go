@@ -1521,7 +1521,7 @@ func main() {
 
 	// Create a logger with a TextHandler at the Info level:
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
-		Level: slog.LevelDebug,
+		Level: slog.LevelInfo,
 	}))
 	slog.SetDefault(logger)
 
