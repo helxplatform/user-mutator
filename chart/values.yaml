@@ -105,7 +105,7 @@ affinity: {}
 config:
   enabled: true
   maps:
-    user-profiles: user-profiles-configmap
+    user-profiles: user-profiles
   features: {}
   secrets:
     cert: user-mutator-cert-tls
