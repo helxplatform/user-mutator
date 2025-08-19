@@ -2,7 +2,45 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ include "user-mutator.fullname" . }}
+  name: {{ include "user-mutator.fullname" . }}-config
+  labels:
+    app: {{ include "user-mutator.name" . }}
+    chart: {{ include "user-mutator.chart" . }}
+    release: "{{ .Release.Name }}"
+    heritage: "{{ .Release.Service }}"
 data:
-  {{- toYaml .Values.config.data | nindent 2 }}
+  config.json: |
+    {
+      "meta": { 
+        {{- if .Values.config.features.ldap }}
+        "libnss_ldap_config_map_name": "{{ include "user-mutator.fullname" . }}-libnss-ldap-config"
+        {{- end }}
+      },
+      "features": {{ toPrettyJson .Values.config.features | nindent 8 }},
+      "maps": {{ toPrettyJson .Values.config.maps | nindent 8 }},
+      "secrets": {{ toPrettyJson .Values.config.secrets | nindent 8 }}
+    }
+{{- if .Values.config.features.ldap }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "user-mutator.fullname" . }}-libnss-ldap-config
+  labels:
+    app: {{ include "user-mutator.name" . }}
+    chart: {{ include "user-mutator.chart" . }}
+    release: "{{ .Release.Name }}"
+    heritage: "{{ .Release.Service }}"
+data:
+  libnss-ldap.conf: |
+    uri ldap://{{ .Values.config.features.ldap.host }}{{if .Values.config.features.ldap.port }}:{{ .Values.config.features.ldap.port }}{{ end }}
+    base {{ .Values.config.features.ldap.user_base_dn }}
+    nss_base_group {{ .Values.config.features.ldap.group_base_dn }}
+    ldap_version 3
+    ssl off
+    pam_password md5
+  nsswitch.conf: |
+    passwd:         files ldap
+    group:          files ldap
+{{- end }}
 {{- end }}

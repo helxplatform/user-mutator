@@ -8,7 +8,7 @@ image:
   repository: containers.renci.org/helxplatform/user-mutator
   pullPolicy: Always
   # Overrides the image tag whose default is the chart appVersion.
-  tag: "latest"
+  tag:
 
 imagePullSecrets: []
 nameOverride: ""
@@ -81,10 +81,31 @@ tolerations: []
 
 affinity: {}
 
+
+#  configure optional features 
+# 
+#  By default there are no features enabled, so features is by default set to {}
+# 
+# example features:
+#
+#  To enable ldap, add a feature named ldap defining the host port and administrative
+#  login, and also specify the ldap password
+#
+#  features:
+#    ldap:
+#      host: "ldap.example.org"
+#      port: 389
+#      username: "cn=admin,dc=example,dc=org"
+#      user_base_dn: "ou=users,dc=example,dc=org"
+#      group_base_dn: "ou=groups,dc=example,dc=org"
+#  secrets:
+#    ldap-password: <ldapSecret>
+
+
 config:
   enabled: true
-  data: {}
-  maps: 
-    user_features: user-features
+  maps:
+    user-profiles: user-profiles
+  features: {}
   secrets:
     cert: user-mutator-cert-tls

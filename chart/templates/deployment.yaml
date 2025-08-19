@@ -31,7 +31,7 @@ spec:
         - name: {{ .Chart.Name }}
           securityContext:
             {{- toYaml .Values.securityContext | nindent 12 }}
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default (printf "v%s" .Chart.AppVersion) }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - name: http
@@ -52,28 +52,30 @@ spec:
           volumeMounts:
             - name: config
               mountPath: /etc/user-mutator-config
-            {{- range .Values.config.maps }}
-            - name: {{ . }}-map-volume
-              mountPath: /etc/user-mutator-maps/{{ . }}
+            {{- range $mapName, $_ := .Values.config.maps }}
+            - name: {{ printf "map-%s" $mapName | replace "_" "-" | lower }}
+              mountPath: {{ printf "/etc/user-mutator-maps/%s" $mapName }}
+              readOnly: true
             {{- end }}
-            {{- range .Values.config.secrets }}
-            - name: {{ . }}-secret-volume
-              mountPath: /etc/user-mutator-secrets/{{ . }}
+            {{- range $key, $value := .Values.config.secrets }}
+            - name: {{ $key }}-secret
+              mountPath: /etc/user-mutator-secrets/{{ $key }}
+              readOnly: true
             {{- end }}
       volumes:
         - name: config
           configMap:
-            name: {{ include "user-mutator.fullname" . }}
-        {{- range .Values.config.maps }}
-        - name: {{ . }}-map-volume
+            name: {{ include "user-mutator.fullname" . }}-config
+        {{- range $key, $mapName := .Values.config.maps }}
+        - name: {{ printf "map-%s" $key | replace "_" "-" | lower }}
           configMap:
-            name: {{ . }}
+            name: {{ $mapName }}
             optional: true
         {{- end }}
-        {{- range .Values.config.secrets }}
-        - name: {{ . }}-secret-volume
+        {{- range $key, $value := .Values.config.secrets }}
+        - name: {{ $key }}-secret
           secret:
-            secretName: {{ . }}
+            secretName: {{ $value }}
         {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:

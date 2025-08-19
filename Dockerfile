@@ -1,7 +1,7 @@
 # Use the official Golang image to build the binary
-FROM golang:1.21 AS builder
+FROM golang:1.23 AS builder
 
-ENV CGO_ENABLED 0
+ENV CGO_ENABLED=0
 
 # Copy the Go source files, Makefile, etc.
 COPY webhook-server /build
