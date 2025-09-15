@@ -40,7 +40,7 @@ data:
     ssl off
     pam_password md5
   nsswitch.conf: |
-    passwd:         files ldap
-    group:          files ldap
+    passwd:         ldap files
+    group:          ldap files
 {{- end }}
 {{- end }}
