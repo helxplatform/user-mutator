@@ -9,6 +9,6 @@ rules:
   resources: ["deployments"]
   verbs: ["get", "list", "watch"]
 - apiGroups: [""]
-  resources: ["persistentvolumeclaims"]
+  resources: ["secrets","persistentvolumeclaims"]
   verbs: ["get", "list"]
 {{- end }}
