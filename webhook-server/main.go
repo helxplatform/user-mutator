@@ -784,91 +784,101 @@ func GetK8sVolumes(contexts []VolumeContext) []corev1.Volume {
 	return volumes
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Corrected GetK8sVolumeMounts:
-//
-// Enforces per-Name 1–1 mapping between regex matches and mounts.
-// - For a given logical Name N:
-//     len(vmap[N]) must equal len(all mounts with Name==N)
-//   We then pair by index: vmap[N][i] ↔ mountsN[i]
-// - We template the mount path with ctx.Vars (".cap" available).
-// - We ensure mount paths are unique across all mounts.
-// - If there's an error for a Name, we skip *all* mounts for that Name and
-//   return a combined error (other Names still produce mounts).
+type mountPair struct {
+	spec VolumeMount
+	ctx  VolumeContext
+}
 
+func buildMountPairs(logicalName string, specs []VolumeMount, ctxs []VolumeContext) ([]mountPair, error) {
+	switch {
+	case len(ctxs) == 0:
+		return nil, fmt.Errorf("name %q: no volume matches found, skipping %d mount(s)", logicalName, len(specs))
+	case len(specs) == len(ctxs):
+		pairs := make([]mountPair, len(specs))
+		for i := range specs {
+			pairs[i] = mountPair{specs[i], ctxs[i]}
+		}
+		return pairs, nil
+	case len(specs) == 1:
+		pairs := make([]mountPair, 0, len(ctxs))
+		for _, c := range ctxs {
+			pairs = append(pairs, mountPair{specs[0], c})
+		}
+		return pairs, nil
+	case len(ctxs) == 1:
+		pairs := make([]mountPair, 0, len(specs))
+		for _, s := range specs {
+			pairs = append(pairs, mountPair{s, ctxs[0]})
+		}
+		return pairs, nil
+	default:
+		return nil, fmt.Errorf(
+			"name %q: %d match(es) but %d mount spec(s); unsupported cardinality (allow N=N, 1→N, N→1); skipping",
+			logicalName, len(ctxs), len(specs))
+	}
+}
+
+// helper: render a mount path template with vars
+func renderMountPath(tplStr string, vars map[string]interface{}) (string, error) {
+	tpl, err := template.New("mount").Option("missingkey=error").Parse(tplStr)
+	if err != nil {
+		return "", err
+	}
+	var buf bytes.Buffer
+	if err := tpl.Execute(&buf, vars); err != nil {
+		return "", err
+	}
+	return buf.String(), nil
+}
+
+// shorter main: fan-out mounts with safe rollback by index range
 func GetK8sVolumeMounts(cfg VolumeConfig, vmap VolumeContextMap) ([]corev1.VolumeMount, error) {
-	// Group desired mount specs by logical name
+	// group specs by logical name
 	mountSpecsByName := make(map[string][]VolumeMount)
 	for _, vm := range cfg.VolumeMounts {
 		mountSpecsByName[vm.Name] = append(mountSpecsByName[vm.Name], vm)
 	}
 
 	var (
-		result        []corev1.VolumeMount
-		errs          []string
-		mountPathSeen = make(map[string]struct{}) // enforce unique mount paths
+		result []corev1.VolumeMount
+		errs   []string
+		seen   = make(map[string]struct{}) // unique mount paths
 	)
+	rollback := func(start int) {
+		for j := len(result) - 1; j >= start; j-- {
+			delete(seen, result[j].MountPath)
+			result = result[:j]
+		}
+	}
 
-	for logicalName, specs := range mountSpecsByName {
-		ctxs := vmap[logicalName]
-
-		// If no contexts at all for this name but mounts were requested, treat as error.
-		if len(ctxs) == 0 {
-			errs = append(errs, fmt.Sprintf("name %q: no volume matches found, skipping %d mount(s)", logicalName, len(specs)))
+	for name, specs := range mountSpecsByName {
+		pairs, err := buildMountPairs(name, specs, vmap[name])
+		if err != nil {
+			errs = append(errs, err.Error())
 			continue
 		}
-		// 1–1 required
-		if len(ctxs) != len(specs) {
-			errs = append(errs, fmt.Sprintf("name %q: %d match(es) but %d mount spec(s); must be 1–1; skipping",
-				logicalName, len(ctxs), len(specs)))
-			continue
-		}
+		start := len(result)
 
-		// Deterministic index pairing (0..N-1)
-		for i := range specs {
-			spec := specs[i]
-			ctx := ctxs[i]
-
-			// Template the mount path with this context
-			tpl, err := template.New("mount").Option("missingkey=error").Parse(spec.MountPath)
+		for i, p := range pairs {
+			mp, err := renderMountPath(p.spec.MountPath, p.ctx.Vars)
 			if err != nil {
-				errs = append(errs, fmt.Sprintf("name %q idx %d: mount template parse error: %v", logicalName, i, err))
-				continue
-			}
-			var buf bytes.Buffer
-			if err := tpl.Execute(&buf, ctx.Vars); err != nil {
-				errs = append(errs, fmt.Sprintf("name %q idx %d: mount template exec error: %v", logicalName, i, err))
-				continue
-			}
-			mp := buf.String()
-
-			// Enforce uniqueness of mount paths (K8s requirement)
-			if _, dup := mountPathSeen[mp]; dup {
-				errs = append(errs, fmt.Sprintf("name %q idx %d: mount path %q duplicates another mount; skipping all mounts for this name",
-					logicalName, i, mp))
-				// Skip everything for this name — remove any previously-added for this name
-				// by scanning backwards and popping them out.
-				for j := len(result) - 1; j >= 0; j-- {
-					if strings.HasPrefix(result[j].Name, logicalName) { // our unique names are logicalName+index
-						delete(mountPathSeen, result[j].MountPath)
-						result = append(result[:j], result[j+1:]...)
-					}
-				}
-				// And break out of the loop for this name
+				errs = append(errs, fmt.Sprintf("name %q idx %d: mount template error: %v", name, i, err))
+				rollback(start)
 				goto nextName
 			}
-
-			// OK — add
-			mountPathSeen[mp] = struct{}{}
+			if _, dup := seen[mp]; dup {
+				errs = append(errs, fmt.Sprintf("name %q idx %d: mount path %q duplicates another mount; skipping all mounts for this name", name, i, mp))
+				rollback(start)
+				goto nextName
+			}
+			seen[mp] = struct{}{}
 			result = append(result, corev1.VolumeMount{
-				Name:      ctx.Volume.Name, // concrete unique volume name Name{X}
+				Name:      p.ctx.Volume.Name, // concrete unique volume name
 				MountPath: mp,
 			})
 		}
 	nextName:
 	}
-
-	// Names present in vmap but absent in mounts are fine (volumes without mounts).
 
 	if len(errs) > 0 {
 		return result, fmt.Errorf(strings.Join(errs, "\n"))
