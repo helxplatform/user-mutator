@@ -5,7 +5,13 @@
 	// Or use a Dockerfile or Docker Compose file. More info: https://containers.dev/guide/dockerfile
 	"image": "mcr.microsoft.com/devcontainers/go:1.23",
 	"features": {
-		"ghcr.io/jungaretti/features/make:1": {}
+		"ghcr.io/jungaretti/features/make:1": {},
+		"ghcr.io/devcontainers/features/node:1": {
+          "version": "lts"
+        },
+		"ghcr.io/devcontainers/features/python:1": {
+		"version": "3.12"
+		}
 	}
 
 	// Features to add to the dev container. More info: https://containers.dev/features.
@@ -15,7 +21,7 @@
 	// "forwardPorts": [],
 
 	// Use 'postCreateCommand' to run commands after the container is created.
-	// "postCreateCommand": "go version",
+        "postCreateCommand": "bash .devcontainer/post-create.sh"
 
 	// Configure tool-specific properties.
 	// "customizations": {},
