@@ -1,41 +1,39 @@
-// For format details, see https://aka.ms/devcontainer.json. For config options, see the
-// README at: https://github.com/devcontainers/templates/tree/main/src/go
 {
-	"name": "Go",
-	// Or use a Dockerfile or Docker Compose file. More info: https://containers.dev/guide/dockerfile
-	"image": "mcr.microsoft.com/devcontainers/go:1.23",
-	"features": {
-		"ghcr.io/jungaretti/features/make:1": {},
-		"ghcr.io/devcontainers/features/node:1": {
-          "version": "lts"
-        },
-		"ghcr.io/devcontainers/features/python:1": {
-		"version": "3.12"
-		}
-	},
+  "name": "Ubuntu + Go + Python + Node (MCP/Codex)",
+  "dockerFile": "Dockerfile",
 
-	// Mount Claude credentials to persist across container rebuilds, per-project
-	"mounts": [
-		"source=${localEnv:HOME}${localEnv:USERPROFILE}/.claude-projects/${localWorkspaceFolderBasename}/.claude,target=/home/vscode/.claude,type=bind,consistency=cached",
-		"source=${localEnv:HOME}${localEnv:USERPROFILE}/.claude-projects/${localWorkspaceFolderBasename}/.claude.json,target=/home/vscode/.claude.json,type=bind,consistency=cached",
-		"source=${localEnv:HOME}${localEnv:USERPROFILE}/.claude-projects/${localWorkspaceFolderBasename}/.claude.json.backup,target=/home/vscode/.claude.json.backup,type=bind,consistency=cached"
-	],
+  // Uncomment to connect as root instead. More info: https://aka.ms/dev-containers-non-root.
+  // "remoteUser": "root"
+  "remoteUser": "vscode",
 
-	// Ensure the mount source directory and files exist before container creation
-	"initializeCommand": "bash -c 'mkdir -p ${localEnv:HOME}${localEnv:USERPROFILE}/.claude-projects/${localWorkspaceFolderBasename}/.claude && touch ${localEnv:HOME}${localEnv:USERPROFILE}/.claude-projects/${localWorkspaceFolderBasename}/.claude.json ${localEnv:HOME}${localEnv:USERPROFILE}/.claude-projects/${localWorkspaceFolderBasename}/.claude.json.backup'",
+  "features": {
+    "ghcr.io/jungaretti/features/make:1": {},
+    "ghcr.io/devcontainers/features/go:1":     { "version": "1.24" },
+    "ghcr.io/devcontainers/features/node:1": { "version": "lts" },
+    "ghcr.io/devcontainers/features/python:1": { "version": "3.12" }
+  },
 
-	// Features to add to the dev container. More info: https://containers.dev/features.
-	// "features": {},
+  // Mount Claude credentials to persist across container rebuilds, per-project
+  "mounts": [
+    "source=${localEnv:HOME}${localEnv:USERPROFILE}/.claude-projects/${localWorkspaceFolderBasename}/.claude,target=/home/vscode/.claude,type=bind,consistency=cached",
+    "source=${localEnv:HOME}${localEnv:USERPROFILE}/.claude-projects/${localWorkspaceFolderBasename}/.claude.json,target=/home/vscode/.claude.json,type=bind,consistency=cached",
+    "source=${localEnv:HOME}${localEnv:USERPROFILE}/.claude-projects/${localWorkspaceFolderBasename}/.claude.json.backup,target=/home/vscode/.claude.json.backup,type=bind,consistency=cached",
+    "source=${localEnv:HOME}${localEnv:USERPROFILE}/.codex-projects/${localWorkspaceFolderBasename},target=/home/vscode/.codex,type=bind,consistency=cached",
+  ],
 
-	// Use 'forwardPorts' to make a list of ports inside the container available locally.
-	// "forwardPorts": [],
+  // Ensure the mount source directory and files exist before container creation
+  "initializeCommand": "bash -c 'mkdir -p ${localEnv:HOME}${localEnv:USERPROFILE}/.claude-projects/${localWorkspaceFolderBasename}/.claude && touch ${localEnv:HOME}${localEnv:USERPROFILE}/.claude-projects/${localWorkspaceFolderBasename}/.claude.json ${localEnv:HOME}${localEnv:USERPROFILE}/.claude-projects/${localWorkspaceFolderBasename}/.claude.json.backup'",
 
-	// Use 'postCreateCommand' to run commands after the container is created.
-	"postCreateCommand": "bash .devcontainer/post-create.sh"
+  // Features to add to the dev container. More info: https://containers.dev/features.
+  // "features": {},
 
-	// Configure tool-specific properties.
-	// "customizations": {},
+  // Use 'forwardPorts' to make a list of ports inside the container available locally.
+  // "forwardPorts": [],
 
-	// Uncomment to connect as root instead. More info: https://aka.ms/dev-containers-non-root.
-	// "remoteUser": "root"
+  // Use 'postCreateCommand' to run commands after the container is created.
+  "postCreateCommand": "bash .devcontainer/post-create.sh"
+
+  // Configure tool-specific properties.
+  // "customizations": {},
+
 }

@@ -3,6 +3,11 @@ set -e
 
 echo "Running post-create setup..."
 
+echo "Fixing npm cache ownership..."
+mkdir -p "$HOME/.npm" "$HOME/.cache" "$HOME/.config" "$HOME/.npm-global/bin"
+sudo chown -R "$(id -u)":"$(id -g)" "$HOME/.npm" "$HOME/.cache" "$HOME/.config" "$HOME/.npm-global"
+
+
 # Install Claude Code
 echo "Installing Claude Code..."
 npm install -g @anthropic-ai/claude-code
