@@ -4,5 +4,6 @@ webhook-server/user-mutator
 *.crt
 certs
 venv
+.vscode
 tools/selfsigned_cluster_issuer.yaml
 tools/*-mutating-webhook-configuration.yaml
