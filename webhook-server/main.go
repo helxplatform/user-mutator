@@ -43,6 +43,13 @@ type SecretRef struct {
 	SecretName string `json:"secretName"`
 }
 
+// ConfigMapRef represents a reference to a Kubernetes ConfigMap.
+// This is used to specify a ConfigMap from which all key-value pairs
+// will be set as environment variables.
+type ConfigMapRef struct {
+	ConfigMapName string `json:"configMapName"`
+}
+
 // VolumeMount defines a specific mount point within a container.
 // It associates a Volume's Name with a MountPath inside the container,
 // indicating where the volume should be mounted.
@@ -84,12 +91,14 @@ type Match struct {
 // VolumeContextMap is keyed by "logical name" (VolumeSource.Name) → slice of matches.
 type VolumeContextMap map[string][]VolumeContext
 
-// UserProfiles now includes VolumeConfig and a slice of SecretRef
-// under the field name SecretsFrom. This allows environment variables
-// to be sourced from the specified Kubernetes secrets.
+// UserProfiles includes VolumeConfig, SecretRef, and ConfigMapRef.
+// SecretsFrom specifies Kubernetes Secrets from which environment variables
+// will be sourced. ConfigMapsFrom specifies ConfigMaps that can be mounted
+// as volumes (via the generic volume scheme) or sourced as environment variables.
 type UserProfiles struct {
-	Volumes     VolumeConfig `json:"volumes"`
-	SecretsFrom []SecretRef  `json:"secretsFrom"`
+	Volumes        VolumeConfig   `json:"volumes"`
+	SecretsFrom    []SecretRef    `json:"secretsFrom"`
+	ConfigMapsFrom []ConfigMapRef `json:"configMapsFrom"`
 }
 
 type PosixGroup struct {
@@ -609,8 +618,17 @@ func FindMatchingResources(namespace, kind, rawTpl string, ctx map[string]string
 			names = append(names, s.Name)
 		}
 
+	case "configmap":
+		list, err := core.ConfigMaps(namespace).List(context.Background(), metav1.ListOptions{})
+		if err != nil {
+			return nil, fmt.Errorf("listing ConfigMaps in %q: %w", namespace, err)
+		}
+		for _, cm := range list.Items {
+			names = append(names, cm.Name)
+		}
+
 	default:
-		return nil, fmt.Errorf("unsupported kind %q; must be \"pvc\" or \"secret\"", kind)
+		return nil, fmt.Errorf("unsupported kind %q; must be \"pvc\", \"secret\", or \"configmap\"", kind)
 	}
 
 	// 3) apply the regex to each name and collect matches + groups
@@ -651,7 +669,7 @@ func parseVolumeSources(namespace, baseName, rawSrc string, ctx map[string]strin
 	var out []VolumeContext
 
 	switch scheme {
-	case "pvc", "secret":
+	case "pvc", "secret", "configmap":
 		matches, err := FindMatchingResources(namespace, scheme, pathTpl, ctx)
 		if err != nil {
 			return nil, fmt.Errorf("scanning %s: %w", scheme, err)
@@ -684,10 +702,18 @@ func parseVolumeSources(namespace, baseName, rawSrc string, ctx map[string]strin
 						ClaimName: m.Name,
 					},
 				}
-			} else {
+			} else if scheme == "secret" {
 				vs = corev1.VolumeSource{
 					Secret: &corev1.SecretVolumeSource{
 						SecretName: m.Name,
+					},
+				}
+			} else if scheme == "configmap" {
+				vs = corev1.VolumeSource{
+					ConfigMap: &corev1.ConfigMapVolumeSource{
+						LocalObjectReference: corev1.LocalObjectReference{
+							Name: m.Name,
+						},
 					},
 				}
 			}
@@ -886,7 +912,7 @@ func GetK8sVolumeMounts(cfg VolumeConfig, vmap VolumeContextMap) ([]corev1.Volum
 	return result, nil
 }
 
-func GetK8sEnvFrom(secretsFrom []SecretRef) []corev1.EnvFromSource {
+func GetK8sEnvFromSecrets(secretsFrom []SecretRef) []corev1.EnvFromSource {
 	var envFromSources []corev1.EnvFromSource
 
 	for _, secretRef := range secretsFrom {
@@ -894,6 +920,25 @@ func GetK8sEnvFrom(secretsFrom []SecretRef) []corev1.EnvFromSource {
 			SecretRef: &corev1.SecretEnvSource{
 				LocalObjectReference: corev1.LocalObjectReference{
 					Name: secretRef.SecretName,
+				},
+			},
+		}
+		envFromSources = append(envFromSources, envFromSource)
+	}
+
+	return envFromSources
+}
+
+// GetK8sEnvFromConfigMaps converts ConfigMapRef slice to Kubernetes EnvFromSource objects.
+// This allows all key-value pairs from a ConfigMap to be injected as environment variables.
+func GetK8sEnvFromConfigMaps(configMapsFrom []ConfigMapRef) []corev1.EnvFromSource {
+	var envFromSources []corev1.EnvFromSource
+
+	for _, configMapRef := range configMapsFrom {
+		envFromSource := corev1.EnvFromSource{
+			ConfigMapRef: &corev1.ConfigMapEnvSource{
+				LocalObjectReference: corev1.LocalObjectReference{
+					Name: configMapRef.ConfigMapName,
 				},
 			},
 		}
@@ -1338,8 +1383,14 @@ func appendProfiles(featureKey string, namespace string, resources ProfileResour
 	mounts, mErr := GetK8sVolumeMounts(userProfiles.Volumes, vmap)
 	resources.VolumeMounts = append(resources.VolumeMounts, mounts...)
 
-	// 4) Secrets/envFrom (unchanged)
-	resources.EnvFromSources = append(resources.EnvFromSources, GetK8sEnvFrom(userProfiles.SecretsFrom)...)
+	// 4) Secrets/envFrom
+	resources.EnvFromSources = append(resources.EnvFromSources, GetK8sEnvFromSecrets(userProfiles.SecretsFrom)...)
+
+	// 5) ConfigMaps/envFrom and volumes
+	// ConfigMaps can be:
+	// a) Referenced in ConfigMapsFrom → injected as environment variables via EnvFromSource
+	// b) Referenced in Volumes.VolumeSources with "configmap://" scheme → mounted as volumes
+	resources.EnvFromSources = append(resources.EnvFromSources, GetK8sEnvFromConfigMaps(userProfiles.ConfigMapsFrom)...)
 
 	// If some names were ambiguous, mounts for those names were skipped and we surface that fact.
 	if mErr != nil {
