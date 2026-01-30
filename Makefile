@@ -24,7 +24,7 @@ CERT_DIR := $(MAKEFILE_DIR)certs-$(MUTATE_CONFIG)
 # export all variables
 export
 
-.PHONY: build go-build go-test push push-version ca-key-cert mutate-config key-cert-secret clean deploy-webhook-server deploy-all kind-up kind-load kind-down kind-all clean-all
+.PHONY: build go-build go-test push push-version ca-key-cert mutate-config key-cert-secret clean deploy-webhook-server deploy-all kind-up kind-load kind-down kind-all clean-all clean-ca-key-cert regenerate-ca-key-cert update-ca-key-cert-in-cluster regenerate-ca-cert-key-and-update-cluster
 
 # Build the Go application
 build:
@@ -55,6 +55,23 @@ push-version:
 ca-key-cert:
 	cd tls-and-mwc && go run main.go createMutationConfig.go generateTLSCerts.go
 
+clean-ca-key-cert:
+    # instead of deleting the directory will just move it.
+    # rm -rf $(CERT_DIR)
+	mv $(CERT_DIR) $(CERT_DIR)-$$(date "+%Y%m%d%H%M")
+
+regenerate-ca-key-cert: clean-ca-key-cert ca-key-cert
+
+update-ca-key-cert-in-cluster: key-cert-secret
+    # Patch the MutatingWebhookConfiguration to include the current CA Bundle.
+	kubectl patch mutatingwebhookconfiguration $(MUTATE_CONFIG) \
+	  --type='json' \
+	  -p="[{'op': 'replace', 'path': '/webhooks/0/clientConfig/caBundle', 'value':'$$(base64 -i $(CERT_DIR)/ca.pem)'}]"
+	# Restart the user-mutator pod so it will load key and cert from the secret.
+	kubectl -n $(WEBHOOK_NAMESPACE) delete pod -l app.kubernetes.io/name="user-mutator"
+
+regenerate-ca-cert-key-and-update-cluster: regenerate-ca-key-cert update-ca-key-cert-in-cluster
+
 mutate-config: ca-key-cert
 	cd tls-and-mwc && go run main.go createMutationConfig.go generateTLSCerts.go -M
 	@echo ""
@@ -69,7 +86,8 @@ disable-mutate-in-namespace:
 	kubectl label namespace $(NAMESPACE_TO_MUTATE) enable-$(MUTATE_CONFIG)-
 
 key-cert-secret: ca-key-cert
-	# create the secret with CA cert and server cert/key
+	# Create the secret using the server cert and key files.  For use by the
+	# user-mutator pod.
 	kubectl create namespace $(WEBHOOK_NAMESPACE) || true && \
 	kubectl create secret generic $(SECRET) --from-file=tls.key=$(CERT_DIR)/key.pem --from-file=tls.crt=$(CERT_DIR)/cert.pem --dry-run=client -o yaml | kubectl -n $(WEBHOOK_NAMESPACE) apply -f -
 	@echo ""
@@ -82,7 +100,7 @@ clean:
 	kubectl delete MutatingWebhookConfiguration $(MUTATE_CONFIG) || true && \
 	helm -n $(WEBHOOK_NAMESPACE) delete $(CHART_NAME) || true && \
 	kubectl -n $(WEBHOOK_NAMESPACE) delete secret $(SECRET) || true && \
-	rm -rf ./envs/certs || true && \
+	rm -rf $(CERT_DIR) || true && \
 	rm -f webhook-server/$(BINARY_NAME)
 
 deploy-webhook-server: key-cert-secret
