@@ -58,7 +58,7 @@ ca-key-cert:
 clean-ca-key-cert:
     # instead of deleting the directory will just move it.
     # rm -rf $(CERT_DIR)
-	mv $(CERT_DIR) $(CERT_DIR)-$$(date "+%Y%m%d%H%M")
+	if [ -d $(CERT_DIR) ]; then mv $(CERT_DIR) $(CERT_DIR)-$$(date "+%Y%m%d%H%M"); fi
 
 regenerate-ca-key-cert: clean-ca-key-cert ca-key-cert
 
