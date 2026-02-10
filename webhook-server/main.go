@@ -1285,7 +1285,7 @@ func printPatchOperations(operations []jsonpatch.JsonPatchOperation) {
 }
 
 // applyResourcesToContainers applies the given resources to each container in the slice.
-func applyResourcesToContainers(containers []corev1.Container, resources ProfileResources) {
+func applyResourcesToContainers(containers []corev1.Container, resources ProfileResources, identityExemptContainers map[string]bool) {
 	for i := range containers {
 		container := &containers[i]
 
@@ -1294,7 +1294,9 @@ func applyResourcesToContainers(containers []corev1.Container, resources Profile
 
 		// Apply SecurityContext
 		if resources.SecurityContext != nil {
-			container.SecurityContext = resources.SecurityContext
+			if !identityExemptContainers[container.Name] {
+				container.SecurityContext = resources.SecurityContext
+			}
 		}
 
 		// Add envFrom sources
@@ -1303,7 +1305,7 @@ func applyResourcesToContainers(containers []corev1.Container, resources Profile
 	}
 }
 
-func calculatePatch(admissionReview *admissionv1.AdmissionReview, resources ProfileResources) ([]byte, error) {
+func calculatePatch(admissionReview *admissionv1.AdmissionReview, resources ProfileResources, identityExemptContainers map[string]bool) ([]byte, error) {
 	// Deserialize the original Deployment from the AdmissionReview
 	var originalDeployment appsv1.Deployment
 	if err := json.Unmarshal(admissionReview.Request.Object.Raw, &originalDeployment); err != nil {
@@ -1317,10 +1319,10 @@ func calculatePatch(admissionReview *admissionv1.AdmissionReview, resources Prof
 	modifiedDeployment.Spec.Template.Spec.Volumes = append(modifiedDeployment.Spec.Template.Spec.Volumes, resources.Volumes...)
 
 	// Apply modifications to the Containers
-	applyResourcesToContainers(modifiedDeployment.Spec.Template.Spec.Containers, resources)
+	applyResourcesToContainers(modifiedDeployment.Spec.Template.Spec.Containers, resources, identityExemptContainers)
 
 	// Apply modifications to the InitContainers
-	applyResourcesToContainers(modifiedDeployment.Spec.Template.Spec.InitContainers, resources)
+	applyResourcesToContainers(modifiedDeployment.Spec.Template.Spec.InitContainers, resources, identityExemptContainers)
 
 	// Apply PodSecurityContext
 	if resources.PodSecurityContext != nil {
@@ -1443,6 +1445,19 @@ func processAdmissionReview(admissionReview admissionv1.AdmissionReview) *admiss
 		return &admissionv1.AdmissionResponse{Allowed: true}
 	}
 
+	identityExemptAnnotation := deployment.Spec.Template.ObjectMeta.Annotations["helx.renci.org/identity-exempt-containers"]
+	identityExemptContainers := make(map[string]bool)
+	if identityExemptAnnotation != "" {
+		containerNames := strings.Split(identityExemptAnnotation, ",")
+		for _, name := range containerNames {
+			trimmedName := strings.TrimSpace(name)
+			if trimmedName != "" {
+				identityExemptContainers[trimmedName] = true
+			}
+		}
+		slog.Info("exempting containers from user-identity injection", "containers", identityExemptContainers)
+	}
+
 	if username, err := ExtractUsernameFromAdmissionReview(admissionReview); err == nil {
 		slog.Info("altering user deployment", "user", username)
 
@@ -1483,7 +1498,7 @@ func processAdmissionReview(admissionReview admissionv1.AdmissionReview) *admiss
 		printVolumeMounts(resources.VolumeMounts)
 
 		// Calculate the patch
-		if patchBytes, err := calculatePatch(&admissionReview, resources); err != nil {
+		if patchBytes, err := calculatePatch(&admissionReview, resources, identityExemptContainers); err != nil {
 			slog.Error("patch creation failed", "err", err)
 		} else {
 			return &admissionv1.AdmissionResponse{
