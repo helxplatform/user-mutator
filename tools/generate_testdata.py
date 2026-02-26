@@ -18,6 +18,11 @@ data:
         {
           "secretName": "global-sample-secret"
         }
+      ],
+      "configMapsFrom": [
+        {
+          "configMapName": "global-sample-configmap"
+        }
       ]
     }
   [[ username ]].json: |
@@ -27,17 +32,30 @@ data:
           "secretName": "[[ username_lower ]]-sample-secret"
         }
       ],
+      "configMapsFrom": [
+        {
+          "configMapName": "[[ username_lower ]]-sample-configmap"
+        }
+      ],
       "volumes": {
         "volumeMounts": [
           {
             "mountPath": "/mnt/test",
             "name": "test"
+          },
+          {
+            "mountPath": "/mnt/config",
+            "name": "config"
           }
         ],
         "volumeSources": [
           {
             "name": "test",
             "source": "pvc://[[ username_lower ]]-test-pvc"
+          },
+          {
+            "name": "config",
+            "source": "configmap://[[ username_lower ]]-volume-configmap"
           }
         ]
       }
@@ -78,6 +96,46 @@ spec:
       storage: 1Gi
 """
 
+configmap_env_template_text1 = """
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: global-sample-configmap
+  namespace: [[ namespace ]]
+data:
+  APP_CONFIG: "production"
+  DEBUG_LEVEL: "info"
+  API_ENDPOINT: "https://api.example.com"
+"""
+
+configmap_env_template_text2 = """
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: [[ username_lower ]]-sample-configmap
+  namespace: [[ namespace ]]
+data:
+  USER_HOME: "/home/[[ username_lower ]]"
+  USER_WORKSPACE: "/workspace/[[ username_lower ]]"
+  CUSTOM_SETTING: "user-specific-value"
+"""
+
+configmap_volume_template_text = """
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: [[ username_lower ]]-volume-configmap
+  namespace: [[ namespace ]]
+data:
+  app.conf: |
+    [settings]
+    user=[[ username_lower ]]
+    timestamp=now
+  init.sh: |
+    #!/bin/bash
+    echo "Initializing for user [[ username_lower ]]"
+"""
+
 def generate_yaml(template_text, data, output_file):
     """
     Generates YAML with the given template and data using Jinja2 and writes it to a file.
@@ -108,13 +166,22 @@ if __name__ == "__main__":
     pvc_output_file = f"{namespace}_{username_lower}_pvc.yaml"
     secret1_output_file = f"{namespace}_global_secret.yaml"
     secret2_output_file = f"{namespace}_{username_lower}_secret.yaml"
+    configmap_env1_output_file = f"{namespace}_global_sample_configmap.yaml"
+    configmap_env2_output_file = f"{namespace}_{username_lower}_sample_configmap.yaml"
+    configmap_volume_output_file = f"{namespace}_{username_lower}_volume_configmap.yaml"
 
     generate_yaml(configmap_template_text, {"namespace": namespace, "username": username, "username_lower": username_lower}, configmap_output_file)
     generate_yaml(pvc_template_text, {"namespace": namespace, "username_lower": username_lower}, pvc_output_file)
     generate_yaml(secret_template_text1, {"namespace": namespace}, secret1_output_file)
     generate_yaml(secret_template_text2, {"namespace": namespace, "username_lower": username_lower}, secret2_output_file)
+    generate_yaml(configmap_env_template_text1, {"namespace": namespace}, configmap_env1_output_file)
+    generate_yaml(configmap_env_template_text2, {"namespace": namespace, "username_lower": username_lower}, configmap_env2_output_file)
+    generate_yaml(configmap_volume_template_text, {"namespace": namespace, "username_lower": username_lower}, configmap_volume_output_file)
 
     print(f"ConfigMap written to {configmap_output_file}")
     print(f"PVC written to {pvc_output_file}")
     print(f"Secret written to {secret1_output_file}")
     print(f"Secret written to {secret2_output_file}")
+    print(f"ConfigMap (EnvFrom) written to {configmap_env1_output_file}")
+    print(f"ConfigMap (EnvFrom) written to {configmap_env2_output_file}")
+    print(f"ConfigMap (Volume) written to {configmap_volume_output_file}")
