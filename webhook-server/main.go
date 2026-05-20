@@ -1284,6 +1284,8 @@ func printPatchOperations(operations []jsonpatch.JsonPatchOperation) {
 	}
 }
 
+func boolPtr(b bool) *bool { return &b }
+
 // applyResourcesToContainers applies the given resources to each container in the slice.
 func applyResourcesToContainers(containers []corev1.Container, resources ProfileResources, identityExemptContainers map[string]bool) {
 	for i := range containers {
@@ -1297,6 +1299,12 @@ func applyResourcesToContainers(containers []corev1.Container, resources Profile
 			if !identityExemptContainers[container.Name] {
 				container.SecurityContext = resources.SecurityContext
 			}
+		}
+		if container.SecurityContext == nil {
+			container.SecurityContext = &corev1.SecurityContext{}
+		}
+		if container.SecurityContext.AllowPrivilegeEscalation == nil {
+			container.SecurityContext.AllowPrivilegeEscalation = boolPtr(false)
 		}
 
 		// Add envFrom sources
