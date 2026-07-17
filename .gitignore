@@ -7,3 +7,4 @@ venv
 .vscode
 tools/selfsigned_cluster_issuer.yaml
 tools/*-mutating-webhook-configuration.yaml
+envs/
