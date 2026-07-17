@@ -1,7 +1,7 @@
 webhook-server/user-mutator
 *.tgz
-*.pem
-*.crt
+**/*.pem
+**/*.crt
 certs
 venv
 .vscode
