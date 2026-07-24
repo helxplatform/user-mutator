@@ -105,9 +105,7 @@ clean:
 
 deploy-webhook-server: key-cert-secret
 	helm -n $(WEBHOOK_NAMESPACE) upgrade --install $(CHART_NAME) \
-	    --set "image.pullPolicy=IfNotPresent" --set "image.tag=$(VERSION)" \
-		--set "config.secrets.cert=$(SECRET)" $(HELM_INSTALL_ARG_1) $(HELM_INSTALL_ARG_2) \
-		./chart
+	    --values $(VALUES_FILE) ./chart
 	@echo ""
 	@echo "To view and follow the logs of the mutator use the following command."
 	@echo "  kubectl -n $(WEBHOOK_NAMESPACE) -l app.kubernetes.io/name=user-mutator logs -f"
