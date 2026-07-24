@@ -1126,6 +1126,14 @@ func getVolumesAndMountsForUserGroups(clientset *kubernetes.Clientset, user *Use
 			// Use the PVC name as the volume name
 			volumeName := pvc.Name
 
+			// Determine the directory name for the mount. By default this is the
+			// group name, but it can be overridden with the optional
+			// "helx.renci.org/group-dir-name" label on the PVC.
+			dirName := groupName
+			if override, ok := pvc.Labels["helx.renci.org/group-dir-name"]; ok && override != "" {
+				dirName = override
+			}
+
 			// Create the volume
 			volume := corev1.Volume{
 				Name: volumeName,
@@ -1139,7 +1147,7 @@ func getVolumesAndMountsForUserGroups(clientset *kubernetes.Clientset, user *Use
 			// Create the volume mount
 			volumeMount := corev1.VolumeMount{
 				Name:      volumeName,
-				MountPath: fmt.Sprintf("/shared/%s", groupName),
+				MountPath: fmt.Sprintf("/shared/%s", dirName),
 			}
 
 			// Add to the slices
