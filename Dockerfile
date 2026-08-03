@@ -1,5 +1,5 @@
 # Use the official Golang image to build the binary
-FROM golang:1.23 AS builder
+FROM golang:1.26 AS builder
 
 ENV CGO_ENABLED=0
 
@@ -11,7 +11,7 @@ WORKDIR /build
 
 RUN go build -o user-mutator
 
-FROM alpine:3.18
+FROM alpine:3.23
 
 # Ensure we have a valid user and group
 RUN addgroup -g 1000 -S helx && \
