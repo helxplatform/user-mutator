@@ -5,10 +5,17 @@ metadata:
   name: user-mutator-role
   namespace: {{ .Release.Namespace }}
 rules:
-- apiGroups: ["apps"]
-  resources: ["deployments"]
-  verbs: ["get", "list", "watch"]
+# Scoped to what webhook-server/main.go actually calls, verified by a repo-wide
+# grep for every CoreV1()/AppsV1() call site. The Deployments API is never
+# called at all (the webhook receives the Deployment object directly in the
+# AdmissionReview payload), so that rule is dropped entirely. secrets/
+# persistentvolumeclaims/configmaps: only `list` is used (FindMatchingResources
+# always lists + regex-matches, even for a plain literal volume source with no
+# capture group; there's no `get`-by-name call site), so `get` is dropped.
+# `list` itself can't be scoped further — Kubernetes RBAC doesn't support
+# resourceNames on the list verb — without a code change to add a get-based
+# fast path for non-regex sources.
 - apiGroups: [""]
-  resources: ["secrets","persistentvolumeclaims", "configmaps"]
-  verbs: ["get", "list"]
+  resources: ["secrets", "persistentvolumeclaims", "configmaps"]
+  verbs: ["list"]
 {{- end }}
