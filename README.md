@@ -1,42 +1,74 @@
-# Mutating Controller for Kubernetes Deployments with for user specialization
+# User-Mutator
 
-### Overview of Functionalities
+The user-mutator will intercept the creation of deployment resources and mutate them in ways defined in the configmap that it's settings are retrieved from.
 
-This collection of functions facilitates a comprehensive system for managing and 
-processing Kubernetes volume configurations and admission control requests in a 
-cloud-native environment. The goal is to streamline the configuration and 
-extension of Kubernetes resources, focusing on volume management and admission 
-control.
+To deploy a very basic user-mutator which adds the proxy environment variables to deployments you can do the following.  This example is for the eduhelx-staging namespace.
 
-#### Key Functionalities:
+The user-mutator can also add volumes to be mounted in pods.  There are YAMLs for this setup in the yamls directory.  eduhelx-data720 and eduhelx-chip690 are examples of adding volumes to pods.
 
-1. **Dynamic Volume Configuration**: Functions like `ReadUserFeaturesFromFile`, 
-`GetK8sVolumes`, `GetK8sVolumeMounts`, and `parseVolumeSource` allow for dynamic 
-and flexible configuration of Kubernetes volumes. They enable reading custom 
-volume configurations from files and transforming these into Kubernetes-native 
-objects (`corev1.Volume` and `corev1.VolumeMount`).
+## Clone the user-mutator github Repo
+```
+git clone https://github.com/helxplatform/user-mutator.git
+```
+Make sure you are on the 'master' branch.
+```
+git checkout master
+```
 
-2. **Admission Control Management**: Functions such as `handleAdmissionReview` and 
-`processAdmissionReview` provide robust mechanisms for Kubernetes admission 
-control. They handle HTTP requests, process these requests to apply custom logic, 
-and generate appropriate responses, ensuring resources are managed according to 
-predefined rules.
+## Create Secret for Proxy Credentials
+Create secret that is used for adding environment variables to pods.  The secret needs to be encoded if there are any characters that need to be escaped (like in the proxy user's password).  This can be done in different ways.
 
-3. **Debugging and Logging Support**: Utility functions like `prettyPrintJSON`, 
-`printVolumes`, `printVolumeMounts`, and `printPatchOperations` provide extensive 
-debugging and logging support. These functions allow for clear logging of complex 
-structures like volumes and JSON patches.
+### Use Browser's Developer Console
+Use encodeURIComponent('password') in developer console of web browser to encode the password if there are symbols.
 
-4. **Patch Calculation for Resource Modification**: The `calculatePatch` function 
-dynamically generates patches for Kubernetes resources, calculating differences 
-between original and modified deployments.
+### Use node.js script at tools/encoder.js
+You need to have node.js installed.  The script will prompt you for what text to encode.
+```
+cd tools
+./encoder.js
+```
 
-5. **Service Readiness Probing**: The `readinessHandler` function provides a 
-mechanism to check the readiness of the service, ensuring it can handle requests 
-effectively.
+### Create the Secret
+```
+NAMESPACE=[NAMESPACE TO DEPLOY USER_MUTATOR IN]
+kubectl -n $NAMESPACE apply -f yamls/proxycreds-env-secret.yaml
+```
 
-Collectively, these functions form a cohesive system that enhances Kubernetes' 
-capabilities, focusing on flexible volume management, streamlined admission 
-control processes, and effective debugging and monitoring tools. This system is 
-beneficial in environments where custom resource configurations and dynamic 
-resource management are critical.
+## Create user-profiles Configmap for User-Mutator
+Create configmap that is used for the user-mutator configuration for the namespace.
+```
+kubectl -n $NAMESPACE apply -f yamls/user-profiles-configmap.yaml
+```
+
+## Create New Environment File for the Namespace
+Copy the config.env from the root of user-mutator source tree into ./envs and add namespace as suffix.
+```
+cp user-mutator/config.env ./envs/config-[NAMESPACE].env
+```
+Set these variables appropriately (change namespace name).
+  - MUTATE_CONFIG=mutating-webhook-eduhelx-staging
+  - WEBHOOK_NAMESPACE=eduhelx-staging
+  - NAMESPACE_TO_MUTATE=eduhelx-staging
+Remove or comment out the line with "VERSION" (unless you know you need to use a certain version).
+
+## Deploy the User-Mutator to the Namespace
+Change your current working directory to the root of the user-mutator code.
+```
+cd user-mutator
+```
+
+## Use the Makefile to Deploy the User-Mutator
+```
+make cnf=../envs/config-eduhelx-staging.env deploy-all
+```
+
+## Enable the User-Mutator to Run on objects created in the namespace.
+For the User-Mutator to examine new objects in the namespace the namespace needs to have a label that enables it.
+```
+make cnf=../envs/config-eduhelx-staging.env enable-mutate-in-namespace
+```
+
+## Renew Certs when they Expire
+```
+make cnf=../envs/config-eduhelx-staging.env regenerate-ca-cert-key-and-update-cluster
+```
