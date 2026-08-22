@@ -1,0 +1,23 @@
+# Git
+.git
+.gitignore
+
+# Dev Container
+.devcontainer/
+
+# Helm chart
+chart/
+
+# Code that's not needed by the production build
+tools/
+tls-and-mwc/
+Makefile
+
+# Documentation/Config
+CLAUDE.md
+README.md
+config.env
+
+# Binary than gets built by Makefile
+webhook-server/user-mutator
+webhook-server/user_mutator
