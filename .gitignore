@@ -1,9 +1,20 @@
+# Binaries that are built by the Makefile
+webhook-server/user_mutator
 webhook-server/user-mutator
+tls-and-mwc/tools
+
+# Packages
 *.tgz
+
+# Generated certs
 *.pem
 *.crt
 certs
+
+# Environment
 venv
 .vscode
+
+# Generated webhook config
 tools/selfsigned_cluster_issuer.yaml
 tools/*-mutating-webhook-configuration.yaml
